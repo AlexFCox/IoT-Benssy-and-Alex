@@ -32,6 +32,7 @@ String currentState = "IDLE";
 String prevState = "IDLE";
 float upperThreshold = 3.0;  // Higher threshold to enter movement state
 float lowerThreshold = 1.0;  // Lower threshold to exit movement state (hysteresis)
+float maxThreshold = 6.0;  // Maximum threshold to filter out drops/impacts
 
 // Step 5: Rep counting variables
 unsigned long repStartTime = 0;
@@ -41,12 +42,25 @@ const int REP_TIMES_SIZE = 10;
 unsigned long repTimes[10];
 int repTimeIndex = 0;
 int repCount = 0;
-float avgRepTime = 0;
+double avgRepTime = 0;  // Changed to double for consistency
 
 // Step 6: Training status variables
 bool trainingActive = false;
 bool trainingStartEventSent = false;
 const unsigned long MAX_IDLE_TIME = 30000;  // 30 seconds max idle time
+
+// Step 7: Cloud variables and Kadenz (cadence) tracking
+int prevRepCount = 0;
+const int KADENZ_BUFFER_SIZE = 50;
+unsigned long kadenzBuffer[50];
+int kadenzIndex = 0;
+double avgKadenz = 0;  // Current cadence in last 15 seconds (double for Particle.variable)
+const unsigned long KADENZ_WINDOW = 15000;  // 15 seconds
+unsigned long lastKadenzEventTime = 0;  // Last time we sent Kadenz event
+const unsigned long KADENZ_EVENT_INTERVAL = 15000;  // Send event every 15 seconds
+int totalTrainingReps = 0;  // Total reps since training started
+unsigned long trainingStartTime = 0;  // When training started
+double avgTrainingKadenz = 0;  // Average cadence for entire training session (double for calculations)
 
 // Function declarations
 void readSensor();
@@ -57,6 +71,7 @@ void detectMovementDir();
 void countValidRep();
 void checkTrainingStatus();
 void resetTrainingVariables();
+void updateCloudAndKadenz();
 
 void readSensor() {
     lis.read();
@@ -125,6 +140,13 @@ void detectRepPhase() {
 void detectMovementDir() {
     // State machine for detecting movement direction changes
 
+    // Filter out extreme accelerations (drops, impacts, sudden jerks)
+    if (abs(filteredAccel) > maxThreshold) {
+        // Sudden impact detected - ignore this reading and force to IDLE
+        currentState = "IDLE";
+        return;
+    }
+
     if (currentState == "IDLE") {
         // From IDLE: Check if movement exceeds upper threshold
         if (filteredAccel > upperThreshold) {
@@ -150,8 +172,7 @@ void detectMovementDir() {
         // else stay MOVING_DOWN
     }
 
-    // Save transition: store current state as previous for next iteration
-    prevState = currentState;
+    // Note: prevState is now updated in countValidRep() AFTER checking for transitions
 }
 
 void countValidRep() {
@@ -168,6 +189,8 @@ void countValidRep() {
                             (prevState == "MOVING_DOWN" && currentState == "IDLE");
 
     if (!repCycleComplete) {
+        // Update prevState before returning (state changed but not a complete rep)
+        prevState = currentState;
         return;  // Not completing a rep cycle
     }
 
@@ -175,6 +198,7 @@ void countValidRep() {
     if (currentTime - repStartTime <= MIN_REP_TIME) {
         // Too fast, skip counting but reset timer
         repStartTime = currentTime;
+        prevState = currentState;  // Update prevState before returning
         return;
     }
 
@@ -190,16 +214,20 @@ void countValidRep() {
     for (int i = 0; i < REP_TIMES_SIZE; i++) {
         sum += repTimes[i];
     }
-    avgRepTime = sum / (float)REP_TIMES_SIZE;
+    avgRepTime = sum / (double)REP_TIMES_SIZE;
 
     // Update timing variables
     lastRepTime = currentTime;
     repStartTime = currentTime;
+
+    // Update prevState after processing the rep
+    prevState = currentState;
 }
 
 void resetTrainingVariables() {
     // Reset all rep counting and timing variables
     repCount = 0;
+    prevRepCount = 0;
     repStartTime = 0;
     lastRepTime = 0;
     repTimeIndex = 0;
@@ -208,6 +236,17 @@ void resetTrainingVariables() {
     // Clear rep times buffer
     for (int i = 0; i < REP_TIMES_SIZE; i++) {
         repTimes[i] = 0;
+    }
+
+    // Reset kadenz tracking
+    kadenzIndex = 0;
+    avgKadenz = 0;
+    avgTrainingKadenz = 0;
+    lastKadenzEventTime = 0;
+    totalTrainingReps = 0;
+    trainingStartTime = 0;
+    for (int i = 0; i < KADENZ_BUFFER_SIZE; i++) {
+        kadenzBuffer[i] = 0;
     }
 
     // Reset training flags
@@ -227,6 +266,11 @@ void checkTrainingStatus() {
 
             // Send training started event (only once)
             if (!trainingStartEventSent) {
+                // Record training start time and initial rep count
+                trainingStartTime = currentTime;
+                totalTrainingReps = repCount;
+                lastKadenzEventTime = currentTime;  // Initialize for periodic events
+
                 Particle.publish("Training", "Training Begonnen");
                 trainingStartEventSent = true;
             }
@@ -247,8 +291,18 @@ void checkTrainingStatus() {
         if (lastRepTime > 0 && avgRepTime > 0 &&
             (currentTime - lastRepTime > (avgRepTime * 3))) {
 
-            // Training ended - send event with rep count
+            // Calculate average Kadenz for entire training session
+            unsigned long trainingDuration = currentTime - trainingStartTime;  // in milliseconds
+            if (trainingDuration > 0) {
+                // Calculate reps per minute for entire training
+                double trainingMinutes = trainingDuration / 60000.0;  // Convert ms to minutes
+                avgTrainingKadenz = repCount / trainingMinutes;
+            }
+
+            // Training ended - send events with rep count and average Kadenz
             Particle.publish("Training", String::format("Training Beendet - %d Reps", repCount));
+            delay(1000);  // Small delay to avoid rate limiting
+            Particle.publish("Kadenz", String::format("Durchschnitt: %.1f Reps/min", avgTrainingKadenz));
 
             // Reset everything
             resetTrainingVariables();
@@ -257,17 +311,53 @@ void checkTrainingStatus() {
     }
 }
 
+void updateCloudAndKadenz() {
+    unsigned long currentTime = millis();
+
+    // Check if we just completed a rep (repCount increased)
+    if (repCount != prevRepCount) {
+        // Rep count increased - add timestamp to kadenz buffer
+        kadenzBuffer[kadenzIndex] = currentTime;
+        kadenzIndex = (kadenzIndex + 1) % KADENZ_BUFFER_SIZE;
+
+        // Update previous rep count
+        prevRepCount = repCount;
+    }
+
+    // Calculate reps in last 15 seconds (always update, even without new rep)
+    int repsIn15s = 0;
+    for (int i = 0; i < KADENZ_BUFFER_SIZE; i++) {
+        if (kadenzBuffer[i] > 0 && (currentTime - kadenzBuffer[i] <= KADENZ_WINDOW)) {
+            repsIn15s++;
+        }
+    }
+
+    // Calculate current kadenz (reps per minute)
+    // repsIn15s * 4 = reps per minute
+    avgKadenz = repsIn15s * 4.0;
+
+    // Send Kadenz event every 15 seconds during active training
+    if (trainingActive && (currentTime - lastKadenzEventTime >= KADENZ_EVENT_INTERVAL)) {
+        Particle.publish("Kadenz", String::format("Aktuelle Kadenz: %.1f Reps/min", avgKadenz));
+        lastKadenzEventTime = currentTime;
+    }
+}
+
 void setup() {
     Serial.begin(9600);
-    
-    if (! lis.begin(0x18)) {  
+
+    // Register cloud variables
+    Particle.variable("reps", repCount);
+    Particle.variable("kadenz", avgKadenz);
+
+    if (! lis.begin(0x18)) {
 		Particle.publish("LIS3DH", "configuration failed");
     } else {
         lis.setRange(LIS3DH_RANGE_2_G);   // 2, 4, 8 or 16 G!
 		Particle.publish("LIS3DH", "configured successfully");
 		configOk = 1;
     }
-    
+
     delay(100);
 }
 
@@ -291,12 +381,18 @@ void loop() {
 	    // Step 6: Check training status
 	    checkTrainingStatus();
 
-        // Debug output: counter, raw magnitude, smoothed magnitude, buffer status
-        Serial.printlnf("%d,%.2f,%.2f,%s",
+	    // Step 7: Update cloud variables and calculate Kadenz
+	    updateCloudAndKadenz();
+
+        // Debug output: comprehensive training data
+        Serial.printlnf("Count:%d | State:%s | Filtered:%.2f | Reps:%d | Kadenz:%.1f | Training:%s | AvgRepTime:%.0fms",
             counter,
-            accelMagnitude,
-            smoothedAccel,
-            bufferFull ? "FULL" : "FILLING");
+            currentState.c_str(),
+            filteredAccel,
+            repCount,
+            avgKadenz,
+            trainingActive ? "ACTIVE" : "IDLE",
+            avgRepTime);
         counter++;
 	}
     delay(50);
