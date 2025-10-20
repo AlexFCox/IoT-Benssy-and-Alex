@@ -29,8 +29,9 @@ float prevSmoothedAccel = 0;
 float filteredAccel = 0;
 float movementThreshold = 2.0;  // Adjust this threshold based on testing
 String currentState = "IDLE";
-float upperThreshold = 0;
-float lowerThreshold = 0;
+String prevState = "IDLE";
+float upperThreshold = 3.0;  // Higher threshold to enter movement state
+float lowerThreshold = 1.0;  // Lower threshold to exit movement state (hysteresis)
 
 // Function declarations
 void readSensor();
@@ -104,8 +105,35 @@ void detectRepPhase() {
 }
 
 void detectMovementDir() {
-    // Stub function - to be implemented in next step
-    // This will detect state changes and handle transitions
+    // State machine for detecting movement direction changes
+
+    if (currentState == "IDLE") {
+        // From IDLE: Check if movement exceeds upper threshold
+        if (filteredAccel > upperThreshold) {
+            currentState = "MOVING_UP";
+        }
+        else if (filteredAccel < -upperThreshold) {
+            currentState = "MOVING_DOWN";
+        }
+        // else stay IDLE
+    }
+    else if (currentState == "MOVING_UP") {
+        // From MOVING_UP: Check if movement drops below lower threshold
+        if (filteredAccel < lowerThreshold) {
+            currentState = "IDLE";
+        }
+        // else stay MOVING_UP
+    }
+    else if (currentState == "MOVING_DOWN") {
+        // From MOVING_DOWN: Check if movement rises above negative lower threshold
+        if (filteredAccel > -lowerThreshold) {
+            currentState = "IDLE";
+        }
+        // else stay MOVING_DOWN
+    }
+
+    // Save transition: store current state as previous for next iteration
+    prevState = currentState;
 }
 
 void setup() {
