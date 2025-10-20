@@ -25,10 +25,19 @@ bool bufferFull = false;
 float smoothedAccel = 0;
 float prevSmoothedAccel = 0;
 
+// Step 4: Phase detection variables
+float filteredAccel = 0;
+float movementThreshold = 2.0;  // Adjust this threshold based on testing
+String currentState = "IDLE";
+float upperThreshold = 0;
+float lowerThreshold = 0;
+
 // Function declarations
 void readSensor();
 void addToMovingAvg();
 void calcMovingAvg();
+void detectRepPhase();
+void detectMovementDir();
 
 void readSensor() {
     lis.read();
@@ -73,6 +82,32 @@ void calcMovingAvg() {
     smoothedAccel = sum / BUFFER_SIZE;
 }
 
+void detectRepPhase() {
+    // Calculate filtered acceleration (remove smoothed baseline)
+    filteredAccel = accelMagnitude - smoothedAccel;
+
+    // Check if filtered acceleration exceeds positive threshold
+    if (filteredAccel > movementThreshold) {
+        currentState = "MOVING_UP";
+        detectMovementDir();
+    }
+    // Check if filtered acceleration exceeds negative threshold
+    else if (filteredAccel < -movementThreshold) {
+        currentState = "MOVING_DOWN";
+        detectMovementDir();
+    }
+    // Otherwise, no significant movement
+    else {
+        currentState = "IDLE";
+        detectMovementDir();
+    }
+}
+
+void detectMovementDir() {
+    // Stub function - to be implemented in next step
+    // This will detect state changes and handle transitions
+}
+
 void setup() {
     Serial.begin(9600);
     
@@ -97,6 +132,9 @@ void loop() {
 
 	    // Step 3: Calculate moving average
 	    calcMovingAvg();
+
+	    // Step 4: Detect repetition phase
+	    detectRepPhase();
 
         // Debug output: counter, raw magnitude, smoothed magnitude, buffer status
         Serial.printlnf("%d,%.2f,%.2f,%s",
