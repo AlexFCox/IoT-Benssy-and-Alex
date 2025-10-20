@@ -21,9 +21,14 @@ float movingAvgBuffer[20];
 int bufferIndex = 0;
 bool bufferFull = false;
 
+// Step 3: Moving average calculation variables
+float smoothedAccel = 0;
+float prevSmoothedAccel = 0;
+
 // Function declarations
 void readSensor();
 void addToMovingAvg();
+void calcMovingAvg();
 
 void readSensor() {
     lis.read();
@@ -49,6 +54,25 @@ void addToMovingAvg() {
     }
 }
 
+void calcMovingAvg() {
+    // Only calculate if buffer is full
+    if (!bufferFull) {
+        return;
+    }
+
+    // Store previous value
+    prevSmoothedAccel = smoothedAccel;
+
+    // Sum all values in buffer
+    float sum = 0;
+    for (int i = 0; i < BUFFER_SIZE; i++) {
+        sum += movingAvgBuffer[i];
+    }
+
+    // Calculate average
+    smoothedAccel = sum / BUFFER_SIZE;
+}
+
 void setup() {
     Serial.begin(9600);
     
@@ -71,7 +95,15 @@ void loop() {
 	    // Step 2: Add to moving average buffer
 	    addToMovingAvg();
 
-        Serial.printlnf("%d,%f,%f,%f,%f", counter, accelX, accelY, accelZ, accelMagnitude);
+	    // Step 3: Calculate moving average
+	    calcMovingAvg();
+
+        // Debug output: counter, raw magnitude, smoothed magnitude, buffer status
+        Serial.printlnf("%d,%.2f,%.2f,%s",
+            counter,
+            accelMagnitude,
+            smoothedAccel,
+            bufferFull ? "FULL" : "FILLING");
         counter++;
 	}
     delay(50);
