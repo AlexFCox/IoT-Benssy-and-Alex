@@ -9,14 +9,21 @@ Adafruit_LIS3DH lis = Adafruit_LIS3DH();
 int counter = 0;
 int configOk = 0;
 
-// Global variables for sensor readings
+// Step 1: Global variables for sensor readings
 float accelX = 0;
 float accelY = 0;
 float accelZ = 0;
 float accelMagnitude = 0;
 
+// Step 2: Moving average buffer variables
+const int BUFFER_SIZE = 20;
+float movingAvgBuffer[20];
+int bufferIndex = 0;
+bool bufferFull = false;
+
 // Function declarations
 void readSensor();
+void addToMovingAvg();
 
 void readSensor() {
     lis.read();
@@ -26,6 +33,20 @@ void readSensor() {
 
     // Calculate magnitude: sqrt(x² + y² + z²)
     accelMagnitude = sqrt(accelX * accelX + accelY * accelY + accelZ * accelZ);
+}
+
+void addToMovingAvg() {
+    // Store current magnitude in buffer
+    movingAvgBuffer[bufferIndex] = accelMagnitude;
+
+    // Increment buffer index
+    bufferIndex++;
+
+    // Check if buffer is full and wrap around
+    if (bufferIndex >= BUFFER_SIZE) {
+        bufferIndex = 0;
+        bufferFull = true;
+    }
 }
 
 void setup() {
@@ -46,6 +67,9 @@ void loop() {
 	if (configOk == 1) {
 	    // Step 1: Read sensor data
 	    readSensor();
+
+	    // Step 2: Add to moving average buffer
+	    addToMovingAvg();
 
         Serial.printlnf("%d,%f,%f,%f,%f", counter, accelX, accelY, accelZ, accelMagnitude);
         counter++;
