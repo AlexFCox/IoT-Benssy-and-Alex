@@ -43,6 +43,11 @@ int repTimeIndex = 0;
 int repCount = 0;
 float avgRepTime = 0;
 
+// Step 6: Training status variables
+bool trainingActive = false;
+bool trainingStartEventSent = false;
+const unsigned long MAX_IDLE_TIME = 30000;  // 30 seconds max idle time
+
 // Function declarations
 void readSensor();
 void addToMovingAvg();
@@ -50,6 +55,8 @@ void calcMovingAvg();
 void detectRepPhase();
 void detectMovementDir();
 void countValidRep();
+void checkTrainingStatus();
+void resetTrainingVariables();
 
 void readSensor() {
     lis.read();
@@ -190,6 +197,66 @@ void countValidRep() {
     repStartTime = currentTime;
 }
 
+void resetTrainingVariables() {
+    // Reset all rep counting and timing variables
+    repCount = 0;
+    repStartTime = 0;
+    lastRepTime = 0;
+    repTimeIndex = 0;
+    avgRepTime = 0;
+
+    // Clear rep times buffer
+    for (int i = 0; i < REP_TIMES_SIZE; i++) {
+        repTimes[i] = 0;
+    }
+
+    // Reset training flags
+    trainingStartEventSent = false;
+}
+
+void checkTrainingStatus() {
+    unsigned long currentTime = millis();
+
+    // Check if training is currently active
+    if (!trainingActive) {
+        // Training not active - check if we should start
+
+        // Need at least 3 reps to start training
+        if (repCount >= 3) {
+            trainingActive = true;
+
+            // Send training started event (only once)
+            if (!trainingStartEventSent) {
+                Particle.publish("Training", "Training Begonnen");
+                trainingStartEventSent = true;
+            }
+        }
+        else {
+            // Less than 3 reps - check if user has been idle too long
+            if (lastRepTime > 0 && (currentTime - lastRepTime > MAX_IDLE_TIME)) {
+                // User idle for 30+ seconds with < 3 reps, reset everything
+                resetTrainingVariables();
+            }
+            return;
+        }
+    }
+    else {
+        // Training is active - check if we should end it
+
+        // Check if idle time exceeds 3x average rep time
+        if (lastRepTime > 0 && avgRepTime > 0 &&
+            (currentTime - lastRepTime > (avgRepTime * 3))) {
+
+            // Training ended - send event with rep count
+            Particle.publish("Training", String::format("Training Beendet - %d Reps", repCount));
+
+            // Reset everything
+            resetTrainingVariables();
+            trainingActive = false;
+        }
+    }
+}
+
 void setup() {
     Serial.begin(9600);
     
@@ -220,6 +287,9 @@ void loop() {
 
 	    // Step 5: Count valid repetitions
 	    countValidRep();
+
+	    // Step 6: Check training status
+	    checkTrainingStatus();
 
         // Debug output: counter, raw magnitude, smoothed magnitude, buffer status
         Serial.printlnf("%d,%.2f,%.2f,%s",
