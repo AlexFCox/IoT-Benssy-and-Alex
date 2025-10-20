@@ -33,12 +33,23 @@ String prevState = "IDLE";
 float upperThreshold = 3.0;  // Higher threshold to enter movement state
 float lowerThreshold = 1.0;  // Lower threshold to exit movement state (hysteresis)
 
+// Step 5: Rep counting variables
+unsigned long repStartTime = 0;
+unsigned long lastRepTime = 0;
+const unsigned long MIN_REP_TIME = 800;  // 0.8s minimum per rep
+const int REP_TIMES_SIZE = 10;
+unsigned long repTimes[10];
+int repTimeIndex = 0;
+int repCount = 0;
+float avgRepTime = 0;
+
 // Function declarations
 void readSensor();
 void addToMovingAvg();
 void calcMovingAvg();
 void detectRepPhase();
 void detectMovementDir();
+void countValidRep();
 
 void readSensor() {
     lis.read();
@@ -136,6 +147,49 @@ void detectMovementDir() {
     prevState = currentState;
 }
 
+void countValidRep() {
+    unsigned long currentTime = millis();
+
+    // Check if state changed
+    if (currentState == prevState) {
+        return;  // No state change, nothing to do
+    }
+
+    // Check if this completes a rep cycle
+    // Rep is complete when transitioning back to IDLE from either direction
+    bool repCycleComplete = (prevState == "MOVING_UP" && currentState == "IDLE") ||
+                            (prevState == "MOVING_DOWN" && currentState == "IDLE");
+
+    if (!repCycleComplete) {
+        return;  // Not completing a rep cycle
+    }
+
+    // Check if valid rep timing (must exceed minimum rep time)
+    if (currentTime - repStartTime <= MIN_REP_TIME) {
+        // Too fast, skip counting but reset timer
+        repStartTime = currentTime;
+        return;
+    }
+
+    // Valid rep detected! Increment count
+    repCount++;
+
+    // Store rep duration in circular buffer
+    repTimes[repTimeIndex] = currentTime - lastRepTime;
+    repTimeIndex = (repTimeIndex + 1) % REP_TIMES_SIZE;
+
+    // Calculate average rep time from array
+    unsigned long sum = 0;
+    for (int i = 0; i < REP_TIMES_SIZE; i++) {
+        sum += repTimes[i];
+    }
+    avgRepTime = sum / (float)REP_TIMES_SIZE;
+
+    // Update timing variables
+    lastRepTime = currentTime;
+    repStartTime = currentTime;
+}
+
 void setup() {
     Serial.begin(9600);
     
@@ -163,6 +217,9 @@ void loop() {
 
 	    // Step 4: Detect repetition phase
 	    detectRepPhase();
+
+	    // Step 5: Count valid repetitions
+	    countValidRep();
 
         // Debug output: counter, raw magnitude, smoothed magnitude, buffer status
         Serial.printlnf("%d,%.2f,%.2f,%s",
