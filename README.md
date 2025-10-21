@@ -37,4 +37,5 @@ https://miro.com/app/board/uXjVJ4x2e0A=/?focusWidget=3458764644625770545
 - Description: Für den fünften Schritt wichtig. 
 
 ## Known Improvements TBD
+- Adjust when Events work again
 - When picking up dumbbell, single rep already counted -> Check if hysterese here is good. Maybe not implemented correctly or need to tweak value.
