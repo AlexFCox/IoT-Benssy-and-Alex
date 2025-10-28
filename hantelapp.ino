@@ -302,7 +302,8 @@ void checkTrainingStatus() {
             // Training ended - send events with rep count and average Kadenz
             Particle.publish("Training", String::format("Training Beendet - %d Reps", repCount));
             delay(1000);  // Small delay to avoid rate limiting
-            Particle.publish("Kadenz", String::format("Durchschnitt: %.1f Reps/min", avgTrainingKadenz));
+            Particle.publish("Kadenz", avgTrainingKadenz);
+            //Particle.publish("Kadenz", String::format("Durchschnitt: %.1f Reps/min", avgTrainingKadenz));
 
             // Reset everything
             resetTrainingVariables();
@@ -338,7 +339,8 @@ void updateCloudAndKadenz() {
 
     // Send Kadenz event every 15 seconds during active training
     if (trainingActive && (currentTime - lastKadenzEventTime >= KADENZ_EVENT_INTERVAL)) {
-        Particle.publish("Kadenz", String::format("Aktuelle Kadenz: %.1f Reps/min", avgKadenz));
+        Particle.publish("Kadenz", avgKadenz);
+        //Particle.publish("Kadenz", String::format("Aktuelle Kadenz: %.1f Reps/min", avgKadenz));
         lastKadenzEventTime = currentTime;
     }
 }
